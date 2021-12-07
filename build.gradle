@@ -1,0 +1,25 @@
+plugins {
+    id 'java'
+}
+
+group 'ch.wsb'
+version '1.0-SNAPSHOT'
+
+repositories {
+    mavenCentral()
+}
+
+dependencies {
+    implementation 'net.sourceforge.tess4j:tess4j:4.5.5'
+    implementation 'org.apache.pdfbox:pdfbox:2.0.24'
+    implementation 'com.google.code.gson:gson:2.8.9'
+    implementation 'org.slf4j:slf4j-simple:1.7.32'
+
+    compileOnly 'org.projectlombok:lombok:1.18.22'
+    annotationProcessor 'org.projectlombok:lombok:1.18.22'
+}
+
+test {
+}
+sourceCompatibility = JavaVersion.VERSION_16
+targetCompatibility = JavaVersion.VERSION_16
