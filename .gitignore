@@ -129,3 +129,4 @@ gradle-app.setting
 .classpath
 
 /src/main/java/ch/wsb/SVMenuParser/Main.java
+/out

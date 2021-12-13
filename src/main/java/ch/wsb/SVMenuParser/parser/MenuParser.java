@@ -40,6 +40,7 @@ import java.util.regex.Pattern;
 public class MenuParser {
     public static final int BORDER_WIDTH = 3;
     public static final Color BOUNDS_COLOR = new Color(0x21F6F6);
+    public static final int MENU_SCALE_FACTOR = 5;
 
     @Getter
     private final BufferedImage image;
@@ -184,33 +185,60 @@ public class MenuParser {
      *
      * @throws ExecutionException   exception thrown when the result of a thread resulted in an exception
      * @throws InterruptedException exception thrown if a running thread gets interrupted
+     * @throws IOException
+     * @throws URISyntaxException
+     * @throws ParseException
+     * @throws RuntimeException
      */
 
-    private void ocrMenus() throws ExecutionException, InterruptedException, IOException, URISyntaxException, ParseException {
+    private void ocrMenus() throws ExecutionException, InterruptedException, IOException, URISyntaxException, ParseException, RuntimeException {
+        float downscaleFactor = 0.2f;
+
         //extract menu week date
-        List<Word> paragraphs = this.createTesseractInstance().getWords(this.image, ITessAPI.TessPageIteratorLevel.RIL_PARA);
+        int scaledImageWidth = (int) (this.image.getWidth() * downscaleFactor);
+        int scaledImageHeight = (int) (this.image.getHeight() * downscaleFactor);
+        BufferedImage scaledImage = ImageHelper.getScaledInstance(this.image, scaledImageWidth, scaledImageHeight);
+        List<Word> textlines = this.createTesseractInstance().getWords(scaledImage, ITessAPI.TessPageIteratorLevel.RIL_TEXTLINE);
         Word headerWord = null;
 
-        for (Word paragraph : paragraphs) {
-            Rectangle boundingBox = paragraph.getBoundingBox();
-            this.bounds.add(boundingBox);
-            if (headerWord == null) headerWord = paragraph;
-            else if (paragraph.getBoundingBox().y < headerWord.getBoundingBox().y) headerWord = paragraph;
+        List<Word> headerWords = new ArrayList<>();
+
+        for (Word textline : textlines) {
+            Rectangle boundingBox = textline.getBoundingBox();
+            if (headerWord == null && boundingBox.width > boundingBox.height * 3) headerWord = textline;
+            else if (headerWord != null && boundingBox.y < headerWord.getBoundingBox().y && boundingBox.width > boundingBox.height * 3)
+                headerWord = textline;
         }
 
         assert headerWord != null;
 
-        Pattern weekDatePattern = Pattern.compile("[0-9]{1,2}.[0-9]{1,2}. - [0-9]{1,2}.[0-9]{1,2}.[0-9]{4}$");
-        Matcher headerMatcher = weekDatePattern.matcher(headerWord.getText().replace("\n", ""));
-        MatchResult headerResult = headerMatcher.results().toList().get(0);
-        this.weekDate = new SimpleDateFormat("dd-MM-yyyy").parse(headerResult.group().split("- ")[1].replace(".", "-"));
+        for (Word textline : textlines) {
+            Rectangle highestBounds = headerWord.getBoundingBox();
+            Rectangle textlineBounds = textline.getBoundingBox();
+            if (textlineBounds.y < highestBounds.y + highestBounds.height && !headerWord.getText().replace("\n", "").equals(""))
+                headerWords.add(textline);
+        }
 
+        Pattern headerDatePattern = Pattern.compile("\\d{1,2}.\\d{1,2}.\\d{4}");
+        String dateText = null;
+
+        for (Word word : headerWords) {
+            String transformedText = word.getText().replace("\n", "").replace(" ", "").replace(",", ".");
+            Matcher matcher = headerDatePattern.matcher(transformedText);
+            if (matcher.results().count() == 1) {
+                String[] split = transformedText.split(String.valueOf(headerDatePattern));
+                for (String part : split) transformedText = transformedText.replace(part, "");
+                dateText = transformedText;
+            }
+        }
+
+        if (dateText == null) throw new RuntimeException("No week date text detected in provided pdf document");
+        this.weekDate = new SimpleDateFormat("dd.MM.yyyy").parse(dateText);
         log.debug("Successfully extracted menu week date from pdf text gained through ocr");
-        log.info("Started parsing menus using ocr");
 
+        log.info("Started parsing menus using ocr");
         List<Map.Entry<Rectangle, String[]>> menus = new ArrayList<>();
         List<CompletableFuture<Map.Entry<Rectangle, String[]>>> futures = new ArrayList<>();
-
 
         for (Rectangle boundingBox : this.menus) {
             CompletableFuture<Map.Entry<Rectangle, String[]>> future = new CompletableFuture();
@@ -244,28 +272,43 @@ public class MenuParser {
      * @throws URISyntaxException exception thrown if no tessdata was found
      */
 
+
     private String[] ocrMenu(Rectangle boundingBox) throws IOException, URISyntaxException {
         BufferedImage copiedImage = this.getImageCopy();
         Graphics2D graphics = (Graphics2D) copiedImage.getGraphics();
-        graphics.setColor(Color.BLUE);
-        graphics.setStroke(new BasicStroke(3));
+        graphics.setColor(MenuParser.BOUNDS_COLOR);
+        graphics.setStroke(new BasicStroke(MenuParser.BORDER_WIDTH));
 
-        BufferedImage menuImage = this.image.getSubimage(boundingBox.x + 3, boundingBox.y + 3, boundingBox.width - 6, boundingBox.height - 6);
-        int scaledWidth = menuImage.getWidth() * MenuFetcher.IMAGE_SCALE_FACTOR;
-        int scaledHeight = menuImage.getHeight() * MenuFetcher.IMAGE_SCALE_FACTOR;
-        List<Word> words = this.createTesseractInstance().getWords(ImageHelper.getScaledInstance(menuImage, scaledWidth, scaledHeight), ITessAPI.TessPageIteratorLevel.RIL_PARA);
+        Rectangle titleBounds = null;
 
-        Word titleWord = null;
-
-        for (Word word : words) {
-            if (titleWord == null) titleWord = word;
-            else if (word.getBoundingBox().y < titleWord.getBoundingBox().y) titleWord = word;
+        PDFCoordinateExtractor coordinateExtractor = new PDFCoordinateExtractor(this.downscaleRectangle(boundingBox), this.PDF.getPage(0));
+        for (Map.Entry<String, Rectangle> entry : coordinateExtractor.getUnparsableWords()) {
+            int entryX = entry.getValue().x * MenuFetcher.IMAGE_SCALE_FACTOR;
+            int entryY = (entry.getValue().y - entry.getValue().height) * MenuFetcher.IMAGE_SCALE_FACTOR;
+            int entryWidth = entry.getValue().width * MenuFetcher.IMAGE_SCALE_FACTOR;
+            int entryHeight = entry.getValue().height * MenuFetcher.IMAGE_SCALE_FACTOR;
+            Rectangle entryBounds = new Rectangle(entryX,entryY, entryWidth, entryHeight);
+            if(titleBounds == null) titleBounds = entryBounds;
+            else titleBounds.add(entryBounds);
         }
 
-        assert titleWord != null;
+        graphics.draw(boundingBox);
+        graphics.drawString(String.valueOf(menus.indexOf(boundingBox)),boundingBox.x, boundingBox.y);
+        graphics.draw(titleBounds);
 
-        int contentY = boundingBox.y + (titleWord.getBoundingBox().y + titleWord.getBoundingBox().height + 15) / MenuFetcher.IMAGE_SCALE_FACTOR;
-        int contentHeight = boundingBox.height - (titleWord.getBoundingBox().height + titleWord.getBoundingBox().y + 15) / MenuFetcher.IMAGE_SCALE_FACTOR;
+        assert titleBounds != null;
+
+        BufferedImage menuImage = this.image.getSubimage(titleBounds.x + 3, titleBounds.y + 3, titleBounds.width - 6, titleBounds.height - 6);
+        int scaledWidth = menuImage.getWidth() * MenuParser.MENU_SCALE_FACTOR;
+        int scaledHeight = menuImage.getHeight() * MenuParser.MENU_SCALE_FACTOR;
+        List<Word> words = this.createTesseractInstance().getWords(ImageHelper.getScaledInstance(menuImage, scaledWidth, scaledHeight), ITessAPI.TessPageIteratorLevel.RIL_TEXTLINE);
+
+        for (Word word: words) {
+            System.out.println(word.getText());
+        }
+
+        int contentY = boundingBox.y + (titleBounds.y + titleBounds.height) / MenuParser.MENU_SCALE_FACTOR + 5;
+        int contentHeight = boundingBox.height - (titleBounds.height + titleBounds.y) / MenuParser.MENU_SCALE_FACTOR + 5;
 
         Rectangle contentBounds = new Rectangle(boundingBox.x, contentY, boundingBox.width, contentHeight);
         Rectangle scaled = this.downscaleRectangle(contentBounds);
@@ -274,7 +317,7 @@ public class MenuParser {
         areaStripper.addRegion("menu", scaled);
         areaStripper.extractRegions(this.PDF.getPage(0));
 
-        String menuTitle = titleWord.getText().replace("-\n", " ").replace("\n", " ").replace("\r", "");
+        String menuTitle = "";//titleWord.getText().replace("-\n", " ").replace("\n", " ").replace("\r", "");
         String menuContent = areaStripper.getTextForRegion("menu").replace("\u2014", "").replace("-\n", " ").replace("\n", " ").replace("\r", "");
 
         return new String[]{menuTitle, menuContent};
@@ -508,26 +551,6 @@ public class MenuParser {
         for (Rectangle menu : this.menus) {
             graphics.drawRect(menu.x, menu.y, menu.width, menu.height);
             graphics.drawString("Menu " + this.menus.indexOf(menu), menu.x + BORDER_WIDTH / 2f, menu.y + menu.height - 2);
-        }
-
-        return copy;
-    }
-
-    /**
-     * Get a BufferedImage with the drawn bounding boxes of the recognized text
-     *
-     * @return BufferedImage with the drawn text bounding boxes
-     */
-
-    public BufferedImage getDrawnBounds() {
-        BufferedImage copy = this.getImageCopy();
-        Graphics2D graphics = (Graphics2D) copy.getGraphics();
-        graphics.setStroke(new BasicStroke(BORDER_WIDTH));
-        graphics.setColor(BOUNDS_COLOR);
-        graphics.setFont(new Font(graphics.getFont().getFontName(), Font.PLAIN, 30));
-
-        for (Rectangle boundingBox : this.bounds) {
-            graphics.drawRect(boundingBox.x, boundingBox.y, boundingBox.width, boundingBox.height);
         }
 
         return copy;
