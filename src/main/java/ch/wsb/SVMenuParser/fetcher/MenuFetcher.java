@@ -71,4 +71,14 @@ public class MenuFetcher {
         PDFRenderer renderer = new PDFRenderer(this.PDF);
         return renderer.renderImage(0, IMAGE_SCALE_FACTOR, ImageType.RGB);
     }
+
+    /**
+     * Close the PDF Document
+     *
+     * @throws IOException exception thrown when the file close fails
+     */
+
+    public void closePDF() throws IOException {
+        this.PDF.close();
+    }
 }

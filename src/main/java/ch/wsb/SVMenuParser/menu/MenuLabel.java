@@ -2,7 +2,8 @@ package ch.wsb.SVMenuParser.menu;
 
 public enum MenuLabel {
     VEGETARIAN("vegetarian"),
-    VEGAN("vegan");
+    VEGAN("vegan"),
+    ONECLIMATE("oneclimate");
 
     private final String path;
 

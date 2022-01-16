@@ -130,3 +130,5 @@ gradle-app.setting
 
 /src/main/java/ch/wsb/SVMenuParser/Main.java
 /out
+/icons
+/errors

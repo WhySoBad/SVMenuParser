@@ -23,7 +23,7 @@ public class PDFImageParser extends PDFStreamEngine {
     @Getter
     Map<Rectangle, BufferedImage> images = new HashMap<>();
 
-    public  PDFImageParser() {
+    public PDFImageParser() {
         addOperator(new Concatenate());
         addOperator(new DrawObject());
         addOperator(new SetGraphicsStateParameters());
@@ -43,7 +43,14 @@ public class PDFImageParser extends PDFStreamEngine {
                 Rectangle position = new Rectangle();
                 position.setBounds((int) matrix.getTranslateX(), (int) matrix.getTranslateY(), (int) matrix.getScalingFactorX(), (int) matrix.getScalingFactorY());
                 BufferedImage bufferedImage = image.getImage();
-                this.images.put(position, bufferedImage);
+                BufferedImage copyImage = new BufferedImage(bufferedImage.getWidth(), bufferedImage.getHeight(), BufferedImage.TYPE_INT_RGB);
+                Graphics2D graphics = (Graphics2D) copyImage.getGraphics();
+                //remove png transparency of found icons (if they are transparent)
+                graphics.setColor(Color.BLACK);
+                graphics.drawRect(0, 0, copyImage.getWidth(), copyImage.getHeight());
+                graphics.drawImage(bufferedImage, 0, 0, copyImage.getWidth(), copyImage.getHeight(), null);
+                graphics.dispose();
+                this.images.put(position, copyImage);
             } else if (object instanceof PDFormXObject form) showForm(form);
         } else super.processOperator(operator, operands);
     }

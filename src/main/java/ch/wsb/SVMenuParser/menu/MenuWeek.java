@@ -4,6 +4,7 @@ import lombok.Getter;
 
 import java.util.ArrayList;
 import java.util.Calendar;
+import java.util.Date;
 import java.util.List;
 
 public class MenuWeek {
@@ -25,5 +26,15 @@ public class MenuWeek {
         }
 
         return matching;
+    }
+
+    /**
+     * Method to get the first date of the menu week
+     *
+     * @return first date of the menu week
+     */
+
+    public Date getWeekDate() {
+        return menus.get(0).getDate();
     }
 }

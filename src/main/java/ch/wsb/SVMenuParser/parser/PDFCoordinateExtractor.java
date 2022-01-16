@@ -1,6 +1,7 @@
 package ch.wsb.SVMenuParser.parser;
 
 import lombok.Getter;
+import lombok.extern.slf4j.Slf4j;
 import org.apache.pdfbox.pdmodel.PDPage;
 import org.apache.pdfbox.text.PDFTextStripperByArea;
 import org.apache.pdfbox.text.TextPosition;
@@ -13,6 +14,7 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 
+@Slf4j
 public class PDFCoordinateExtractor extends PDFTextStripperByArea {
     @Getter
     private final List<Map.Entry<String, Rectangle>> words = new ArrayList();
@@ -28,9 +30,11 @@ public class PDFCoordinateExtractor extends PDFTextStripperByArea {
      * @throws IOException If there is an error loading the properties.
      */
     public PDFCoordinateExtractor(Rectangle region, PDPage pdfPage) throws IOException {
+        log.debug("Initializing new PDFCoordinateExtractor");
         this.region = region;
         this.addRegion("region", region);
         this.extractRegions(pdfPage);
+        log.debug("Successfully initialized new PDFCoordinateExtractor");
     }
 
     @Override

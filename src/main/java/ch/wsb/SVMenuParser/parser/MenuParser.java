@@ -40,7 +40,7 @@ import java.util.regex.Pattern;
 public class MenuParser {
     public static final int BORDER_WIDTH = 3;
     public static final Color BOUNDS_COLOR = new Color(0x21F6F6);
-    public static final int MENU_SCALE_FACTOR = 5;
+    public static final int MENU_SCALE_FACTOR = 1;
 
     @Getter
     private final BufferedImage image;
@@ -51,7 +51,6 @@ public class MenuParser {
     @Getter
     private final MenuWeek menuWeek;
 
-    private final List<Rectangle> bounds = new ArrayList<>();
     private final List<Rectangle> horizontals = new ArrayList<>();
     private final List<Rectangle> verticals = new ArrayList<>();
     private final List<Rectangle> menus = new ArrayList<>();
@@ -87,12 +86,14 @@ public class MenuParser {
 
             this.readMenus();
         } else this.ocrMenus();
+        fetcher.closePDF();
 
         //create menu week
         this.menuWeek = new MenuWeek(this.parsedMenus);
 
         long end = new Date().getTime();
         log.info("Successfully parsed {} menus in {}ms", this.menuWeek.getMenus().size(), end - start);
+
     }
 
     /**
@@ -192,7 +193,7 @@ public class MenuParser {
      */
 
     private void ocrMenus() throws ExecutionException, InterruptedException, IOException, URISyntaxException, ParseException, RuntimeException {
-        float downscaleFactor = 0.2f;
+        float downscaleFactor = 0.25f;
 
         //extract menu week date
         int scaledImageWidth = (int) (this.image.getWidth() * downscaleFactor);
@@ -221,14 +222,48 @@ public class MenuParser {
 
         Pattern headerDatePattern = Pattern.compile("\\d{1,2}.\\d{1,2}.\\d{4}");
         String dateText = null;
+        long highestCount = 0;
+
+        StringBuilder headerText = new StringBuilder();
 
         for (Word word : headerWords) {
             String transformedText = word.getText().replace("\n", "").replace(" ", "").replace(",", ".");
+            headerText.append(transformedText);
             Matcher matcher = headerDatePattern.matcher(transformedText);
-            if (matcher.results().count() == 1) {
+            long count = matcher.results().count();
+            if (count > highestCount) highestCount = count;
+            if (count == 1) {
                 String[] split = transformedText.split(String.valueOf(headerDatePattern));
                 for (String part : split) transformedText = transformedText.replace(part, "");
                 dateText = transformedText;
+            }
+        }
+
+        if(highestCount == 0) {
+            String transformedHeaderText = headerText.toString();
+            Matcher matcher = headerDatePattern.matcher(transformedHeaderText);
+            if (matcher.results().count() == 1) {
+                String[] split = headerText.toString().split(String.valueOf(headerDatePattern));
+                for (String part : split) transformedHeaderText = transformedHeaderText.replace(part, "");
+                dateText = transformedHeaderText;
+            }
+        }
+
+        if (highestCount == 0 && dateText == null) {
+            BufferedImage copy = this.getImageCopy();
+            Graphics2D graphics = (Graphics2D) copy.getGraphics();
+            graphics.setStroke(new BasicStroke(MenuParser.BORDER_WIDTH));
+            graphics.setColor(MenuParser.BOUNDS_COLOR);
+            for (Word word : headerWords) {
+                int scaledWidth = (int) (word.getBoundingBox().width * (1 / downscaleFactor));
+                int scaledHeight = (int) (word.getBoundingBox().height * (1 / downscaleFactor));
+                int scaledX = (int) (word.getBoundingBox().x * (1 / downscaleFactor));
+                int scaledY = (int) (word.getBoundingBox().y * (1 / downscaleFactor));
+                graphics.draw(new Rectangle(scaledX, scaledY, scaledWidth, scaledHeight));
+            }
+            File file = new File("errors/nodate-" + new Date().getTime() + ".png");
+            if (!file.exists()) {
+                if (file.mkdirs()) ImageIO.write(copy, "png", file);
             }
         }
 
@@ -272,13 +307,7 @@ public class MenuParser {
      * @throws URISyntaxException exception thrown if no tessdata was found
      */
 
-
     private String[] ocrMenu(Rectangle boundingBox) throws IOException, URISyntaxException {
-        BufferedImage copiedImage = this.getImageCopy();
-        Graphics2D graphics = (Graphics2D) copiedImage.getGraphics();
-        graphics.setColor(MenuParser.BOUNDS_COLOR);
-        graphics.setStroke(new BasicStroke(MenuParser.BORDER_WIDTH));
-
         Rectangle titleBounds = null;
 
         PDFCoordinateExtractor coordinateExtractor = new PDFCoordinateExtractor(this.downscaleRectangle(boundingBox), this.PDF.getPage(0));
@@ -287,28 +316,39 @@ public class MenuParser {
             int entryY = (entry.getValue().y - entry.getValue().height) * MenuFetcher.IMAGE_SCALE_FACTOR;
             int entryWidth = entry.getValue().width * MenuFetcher.IMAGE_SCALE_FACTOR;
             int entryHeight = entry.getValue().height * MenuFetcher.IMAGE_SCALE_FACTOR;
-            Rectangle entryBounds = new Rectangle(entryX,entryY, entryWidth, entryHeight);
-            if(titleBounds == null) titleBounds = entryBounds;
+            Rectangle entryBounds = new Rectangle(entryX, entryY, entryWidth, entryHeight);
+            if (titleBounds == null) titleBounds = entryBounds;
             else titleBounds.add(entryBounds);
         }
-
-        graphics.draw(boundingBox);
-        graphics.drawString(String.valueOf(menus.indexOf(boundingBox)),boundingBox.x, boundingBox.y);
-        graphics.draw(titleBounds);
-
         assert titleBounds != null;
 
-        BufferedImage menuImage = this.image.getSubimage(titleBounds.x + 3, titleBounds.y + 3, titleBounds.width - 6, titleBounds.height - 6);
-        int scaledWidth = menuImage.getWidth() * MenuParser.MENU_SCALE_FACTOR;
-        int scaledHeight = menuImage.getHeight() * MenuParser.MENU_SCALE_FACTOR;
-        List<Word> words = this.createTesseractInstance().getWords(ImageHelper.getScaledInstance(menuImage, scaledWidth, scaledHeight), ITessAPI.TessPageIteratorLevel.RIL_TEXTLINE);
-
-        for (Word word: words) {
-            System.out.println(word.getText());
+        if (titleBounds == null) {
+            log.info(String.valueOf(coordinateExtractor.getUnparsableWords().size()));
+            BufferedImage copy = this.getImageCopy();
+            Graphics2D graphics = (Graphics2D) copy.getGraphics();
+            graphics.setStroke(new BasicStroke(MenuParser.BORDER_WIDTH));
+            graphics.setColor(MenuParser.BOUNDS_COLOR);
+            graphics.draw(boundingBox);
+            File file = new File("errors/notitle-" + new Date().getTime() + ".png");
+            if(!file.exists()) {
+                if(file.mkdirs())ImageIO.write(copy, "png", file);
+            }
         }
 
-        int contentY = boundingBox.y + (titleBounds.y + titleBounds.height) / MenuParser.MENU_SCALE_FACTOR + 5;
-        int contentHeight = boundingBox.height - (titleBounds.height + titleBounds.y) / MenuParser.MENU_SCALE_FACTOR + 5;
+        BufferedImage menuImage = this.image.getSubimage(titleBounds.x - 10, titleBounds.y - 10, titleBounds.width + 20, titleBounds.height + 20);
+        int scaledWidth = menuImage.getWidth() * MenuParser.MENU_SCALE_FACTOR;
+        int scaledHeight = menuImage.getHeight() * MenuParser.MENU_SCALE_FACTOR;
+
+        List<Word> textlines = this.createTesseractInstance().getWords(ImageHelper.getScaledInstance(menuImage, scaledWidth, scaledHeight), ITessAPI.TessPageIteratorLevel.RIL_TEXTLINE);
+        StringBuilder titleText = new StringBuilder();
+        for (Word textline : textlines) {
+            String replacedText = textline.getText().replace("\u2014", "").replace("-\n", "").replace("\n", " ").replace("\r", "\n");
+            titleText.append(replacedText);
+        }
+
+        //calculate content bounding box
+        int contentY = boundingBox.y + (titleBounds.height + titleBounds.y - boundingBox.y) + 5;
+        int contentHeight = boundingBox.height - (titleBounds.height + titleBounds.y - boundingBox.y) + 5;
 
         Rectangle contentBounds = new Rectangle(boundingBox.x, contentY, boundingBox.width, contentHeight);
         Rectangle scaled = this.downscaleRectangle(contentBounds);
@@ -317,9 +357,10 @@ public class MenuParser {
         areaStripper.addRegion("menu", scaled);
         areaStripper.extractRegions(this.PDF.getPage(0));
 
-        String menuTitle = "";//titleWord.getText().replace("-\n", " ").replace("\n", " ").replace("\r", "");
+        String menuTitle = titleText.toString();
         String menuContent = areaStripper.getTextForRegion("menu").replace("\u2014", "").replace("-\n", " ").replace("\n", " ").replace("\r", "");
 
+        //return string array with menu title and menu content
         return new String[]{menuTitle, menuContent};
     }
 
@@ -414,6 +455,7 @@ public class MenuParser {
         double highestSimilarity = 0d;
         BufferedImage highestSimilarityImage = null;
 
+        //compare every image in the pdf with the given label icons
         for (Rectangle imageBounds : imageParser.getImages().keySet()) {
             int imageX = imageBounds.x * MenuFetcher.IMAGE_SCALE_FACTOR;
             int imageHeight = imageBounds.height * MenuFetcher.IMAGE_SCALE_FACTOR;
@@ -429,6 +471,7 @@ public class MenuParser {
                     if (highestSimilarity < similarity) {
                         highestSimilarity = similarity;
                         highestSimilarityImage = currentIcon;
+                        //similarity accuracy has to be at least 80%
                         if (similarity > 80) label = menuLabel;
                     }
                 }
@@ -438,9 +481,26 @@ public class MenuParser {
         //check if there could be a new icon
         if (highestSimilarity < 80 && highestSimilarity > 0) {
             log.warn("Possible new icon found since only a low similarity was found");
-            File unknownIcon = new File("unknown-icon-" + new Date().getTime() + ".png");
-            if (!unknownIcon.exists()) {
-                if (unknownIcon.mkdirs()) ImageIO.write(highestSimilarityImage, "png", unknownIcon);
+            double highestUnknownSimilarity = 0;
+            File iconsDirectory = new File("icons");
+            if (iconsDirectory.exists()) {
+                for (File file : Objects.requireNonNull(iconsDirectory.listFiles())) {
+                    try {
+                        BufferedImage image = ImageIO.read(file);
+                        double similarity = this.getSimilarity(image, highestSimilarityImage);
+                        if (similarity > highestUnknownSimilarity) highestUnknownSimilarity = similarity;
+                    } catch (IOException e) {
+                        log.warn("Found non image file in icons directory");
+                    }
+                }
+            }
+            if (highestUnknownSimilarity > 80)
+                log.warn("Didn't save unknown icon. Reason: Found similar unknown icon in icons directory");
+            else {
+                File unknownIcon = new File("icons/unknownicon-" + new Date().getTime() + ".png");
+                if (!unknownIcon.exists()) {
+                    if (unknownIcon.mkdirs()) ImageIO.write(highestSimilarityImage, "png", unknownIcon);
+                }
             }
         }
 
@@ -496,6 +556,7 @@ public class MenuParser {
         BufferedImage scaledImage2 = ImageHelper.getScaledInstance(image2, width, height);
 
         long difference = 0;
+        //compare every pixel in the two images
         for (int y = height - 1; y >= 0; y--) {
             for (int x = width - 1; x >= 0; x--) {
                 int rgb1 = image1.getRGB(x, y);
