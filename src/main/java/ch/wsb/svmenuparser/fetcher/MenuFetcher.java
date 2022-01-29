@@ -13,8 +13,6 @@ import java.util.Date;
 
 @Slf4j
 public class MenuFetcher {
-    public static final int IMAGE_SCALE_FACTOR = 3;
-
     @Getter
     PDDocument PDF;
 
@@ -61,18 +59,6 @@ public class MenuFetcher {
     public MenuFetcher(File file) throws IOException {
         log.info("Initialized new MenuFetcher");
         this.PDF = PDDocument.load(file);
-    }
-
-    /**
-     * Get an image of the downloaded PDF document
-     *
-     * @return image of the downloaded PDF document
-     * @throws IOException exception thrown when the image capturing fails
-     */
-
-    public BufferedImage getImage() throws IOException {
-        PDFRenderer renderer = new PDFRenderer(this.PDF);
-        return renderer.renderImage(0, IMAGE_SCALE_FACTOR, ImageType.RGB);
     }
 
     /**

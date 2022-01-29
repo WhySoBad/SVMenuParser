@@ -1,18 +1,10 @@
 package ch.wsb.svmenuparser.parser;
 
-import ch.wsb.svmenuparser.fetcher.MenuFetcher;
 import ch.wsb.svmenuparser.menu.Menu;
 import ch.wsb.svmenuparser.menu.MenuLabel;
 import ch.wsb.svmenuparser.menu.MenuPrice;
-import ch.wsb.svmenuparser.menu.MenuWeek;
 import lombok.Getter;
 import lombok.extern.slf4j.Slf4j;
-import net.sourceforge.tess4j.ITessAPI;
-import net.sourceforge.tess4j.Tesseract;
-import net.sourceforge.tess4j.Word;
-import net.sourceforge.tess4j.util.ImageHelper;
-import org.apache.log4j.Level;
-import org.apache.log4j.Logger;
 import org.apache.pdfbox.pdmodel.PDDocument;
 import org.apache.pdfbox.text.PDFTextStripper;
 import org.apache.pdfbox.text.PDFTextStripperByArea;
@@ -20,31 +12,32 @@ import org.apache.pdfbox.text.PDFTextStripperByArea;
 import javax.imageio.ImageIO;
 import java.awt.*;
 import java.awt.image.BufferedImage;
-import java.io.File;
 import java.io.IOException;
-import java.net.URISyntaxException;
-import java.nio.charset.StandardCharsets;
-import java.nio.file.Paths;
+import java.net.URL;
 import java.text.ParseException;
 import java.text.SimpleDateFormat;
 import java.util.*;
 import java.util.List;
-import java.util.concurrent.CompletableFuture;
-import java.util.concurrent.ExecutionException;
 import java.util.regex.MatchResult;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
+/**
+ * This class is used to read menu pdfs so that they can be processed
+ *
+ * Multiple pdfs can be read with #readPdf(PDDocument)
+ *
+ * All previously read menus can be fetched with #getMenus()
+ */
 @Slf4j
 public class MenuParser {
-    public static final int BORDER_WIDTH = 3;
-    public static final Color BOUNDS_COLOR = new Color(0x21F6F6);
 
     private float labelAccuracy;
 
     private PDFTextStripper textStripper;
     private UnicodeMapper unicodeMapper;
     private Map<MenuLabel, BufferedImage> knownLabels;
+    @Getter
     private List<BufferedImage> unknownLabels;
 
     private List<Rectangle> horizontalLines;
@@ -52,63 +45,70 @@ public class MenuParser {
     private List<Rectangle> menuBounds;
     private PDDocument pdf;
 
+    @Getter
     private List<Menu> menus;
 
-    public MenuParser(UnicodeMapper map, float labelAccuracy, MenuFetcher fetcher) throws URISyntaxException, IOException, ParseException, ExecutionException, InterruptedException {
+    /**
+     * Creates a map parser with the default paths and values (reads the resources from the library resource directory)
+     *
+     * @throws IOException exception thrown when the resources cannot be loaded
+     */
+    public MenuParser() throws IOException {
+        this(MenuParser.class.getResource("/maps/capitals.map"), MenuParser.class.getResource("/icons"), 0.8f);
+    }
+
+    /**
+     * Creates a menu parser
+     *
+     * @param mapFile       path to the unicode map
+     * @param labelFolder   path to the label reference images
+     * @param labelAccuracy required amount of accuracy for two labels to be counted the same (0 - 1)
+     * @throws IOException exception thrown from loading
+     */
+    public MenuParser(URL mapFile, URL labelFolder, float labelAccuracy) throws IOException {
 
         this.labelAccuracy = labelAccuracy;
         this.textStripper = new PDFTextStripper();
+        this.menus = new ArrayList<>();
+        this.unknownLabels = new ArrayList<>();
 
-        this.unicodeMapper = map;
-
-
-        Logger.getRootLogger().setLevel(Level.OFF); // Disable annoying logging things
-        this.image = fetcher.getImage();
-        this.PDF = fetcher.getPDF();
-
-        long start = new Date().getTime();
-
-        log.info("Initialized new MenuParser");
-
-        this.getLines(this.PDF);
-        log.debug("Successfully calculated table border lines");
-        this.calculateMenuBounds();
-        log.debug("Successfully calculated menu bounding boxes");
-
-        PDFTextStripper textStripper = new PDFTextStripper();
-        String headerText = textStripper.getText(this.PDF).split("\n")[0];
-        log.debug("Successfully extracted text from the pdf");
-
-        this.readMenus();
-        /*
-        //check if the pdf can be fully parsed with pdfbox text stripper
-        if (StandardCharsets.ISO_8859_1.newEncoder().canEncode(headerText)) {
-            //parse header to menu week
-            Pattern weekDatePattern = Pattern.compile("[0-9]{1,2}.[0-9]{1,2}. - [0-9]{1,2}.[0-9]{1,2}.[0-9]{4}$");
-            Matcher headerMatcher = weekDatePattern.matcher(headerText);
-            MatchResult headerResult = headerMatcher.results().toList().get(0);
-            this.weekDate = new SimpleDateFormat("dd-MM-yyyy").parse(headerResult.group().split("- ")[1].replace(".", "-"));
-            log.debug("Successfully extracted menu week date from pdf text");
-
-            this.readMenus();
-        } else this.ocrMenus();
-        */
-        fetcher.closePDF();
-
-        //create menu week
-
-        long end = new Date().getTime();
-        log.info("Successfully parsed {} menus in {}ms", this.menuWeek.getMenus().size(), end - start);
-
+        load(mapFile, labelFolder);
     }
 
-    public void readPDF(MenuFetcher fetcher) throws Exception { // Yes, it indeed throws an exception
+    /**
+     * Loads the data needed for menu parsing
+     *
+     * @param map    path to unicode map file
+     * @param labels path to folder containing label reference images
+     * @throws IOException error from lading
+     */
+    private void load(URL map, URL labels) throws IOException {
+        // Load map file
+        unicodeMapper = new UnicodeMapper();
+        unicodeMapper.loadMap(new Scanner(map.openStream()).useDelimiter("\\Z").next());
+
+        // Load known labels
+        knownLabels = new HashMap<>();
+        String path = labels.toString();
+        for (MenuLabel value : MenuLabel.values()) {
+            URL label = new URL(path + "/" + value.toString() + ".png");
+            knownLabels.put(value, ImageIO.read(label));
+        }
+    }
+
+    /**
+     * Reads a pdf and inserts the read menus into the menu array
+     *
+     * @param doc document to read
+     * @throws Exception when something goes wrong
+     */
+    public void readPDF(PDDocument doc) throws Exception { // Yes, it indeed throws an exception
         log.info("Parsing new pdf");
         long start = System.currentTimeMillis();
-        PDDocument pdf = fetcher.getPDF();
+        pdf = doc;
 
         // Fetch menu alignment
-        this.getLines(pdf);
+        this.getLines();
         log.debug("Successfully calculated table border lines");
         this.calculateMenuBounds();
         log.debug("Successfully calculated menu bounding boxes");
@@ -118,21 +118,25 @@ public class MenuParser {
         Date weekDate = extractWeekDateFromHeader(headerText);
 
         // Get the menus
-        List<String> menus = extractMenuTextsRaw(pdf);
+        List<String> menus = extractMenuTextsRaw();
         for (String menu : menus) {
             this.menus.add(parseMenu(menu, menuBounds.get(menus.indexOf(menu)), weekDate));
         }
 
-        log.debug("Read menu PDF in {}ms", System.currentTimeMillis() - start);
+        log.info("Read menu PDF in {}ms", System.currentTimeMillis() - start);
     }
 
-    private List<String> extractMenuTextsRaw(PDDocument pdf) throws IOException {
-        log.info("Started parsing menus without ocr");
+    /**
+     * Extracts the raw (un-unicodemapped) texts for each menu
+     *
+     * @return list of raw texts
+     * @throws IOException exception from reading
+     */
+    private List<String> extractMenuTextsRaw() throws IOException {
         PDFTextStripperByArea areaStripper = new PDFTextStripperByArea();
         //add all text regions to the text stripper
         for (Rectangle boundingBox : this.menuBounds) {
-            Rectangle scaled = this.downscaleRectangle(boundingBox);
-            areaStripper.addRegion(String.valueOf(this.menuBounds.indexOf(boundingBox)), scaled);
+            areaStripper.addRegion(String.valueOf(this.menuBounds.indexOf(boundingBox)), boundingBox);
         }
         areaStripper.extractRegions(pdf.getPage(0));
 
@@ -144,39 +148,63 @@ public class MenuParser {
         return strings;
     }
 
+    /**
+     * Parses one menu into a menu object
+     *
+     * @param text     text of the menu
+     * @param bounds   bounds where the menu is
+     * @param weekDate date of the menu
+     * @return parsed menu
+     * @throws IOException occurs if pdf can't be read
+     */
     private Menu parseMenu(String text, Rectangle bounds, Date weekDate) throws IOException {
         String title;
         String body;
 
         if (text.contains("—")) { // If em dash present, split title from it by it
-            String[] split = text.split("");
+            String[] split = text.split("—");
 
-            title = split[0].replace("-\n", " ").replace("\n", " ").replace("\r", "");
-            body = split[1].replace("-\n", " ").replace("\n", " ").replace("\r", "");
+            title = split[0].replace("-\n", " ").replace("\n", " ").replace("\r", "").trim();
+            body = split[1].replace("-\n", " ").replace("\n", " ").replace("\r", "").trim();
+
         } else { // else, use the last unicode as a reference
             int last = unicodeMapper.getLastUnicodeOccasion(text);
 
-            title = text.substring(0, last + 1);
-            body = text.substring(last);
+            title = text.substring(0, last + 1).trim();
+            body = text.substring(last + 1).trim();
+
+            // Fill last quote if not done
+            if (body.startsWith("\"") && title.chars().filter(ch -> ch == '\"').count() % 2 != 0) {
+                title += "\"";
+                body = body.substring(1);
+            }
         }
 
         title = unicodeMapper.process(title);
         body = unicodeMapper.process(body);
 
-        return new Menu(title, getMenuPrices(body), getMenuDescription(text), getMenuDate(bounds, weekDate), getMenuGroup(bounds), getMenuLabel(bounds));
+        return new Menu(title, getMenuPrices(body), getMenuDescription(body), getMenuDate(bounds, weekDate), getMenuGroup(bounds), getMenuLabel(bounds));
     }
 
-    public Date extractWeekDateFromHeader(String header) throws ParseException {
-        Pattern weekDatePattern = Pattern.compile("[0-9]{1,2}.[0-9]{1,2}. - [0-9]{1,2}.[0-9]{1,2}.[0-9]{4}$");
+    /**
+     * Extracts the week date from the pdf header
+     *
+     * @param header header text to extract
+     * @return date to get
+     * @throws ParseException regex exception
+     */
+    private Date extractWeekDateFromHeader(String header) throws ParseException {
+        header = header.replace(" ", "");
+        Pattern weekDatePattern = Pattern.compile("[0-9]{1,2}.[0-9]{1,2}.-[0-9]{1,2}.[0-9]{1,2}.[0-9]{4}$");
         Matcher headerMatcher = weekDatePattern.matcher(header);
         MatchResult headerResult = headerMatcher.results().toList().get(0);
-        return new SimpleDateFormat("dd-MM-yyyy").parse(headerResult.group().split("- ")[1].replace(".", "-"));
+        return new SimpleDateFormat("dd-MM-yyyy").parse(headerResult.group().split("-")[1].replace(".", "-"));
     }
 
     /**
      * Method to sort out the horizontal and vertical table lines
      */
-    private void getLines(PDDocument pdf) throws IOException {
+    private void getLines() throws IOException {
         this.horizontalLines = new ArrayList<>();
         this.verticalLines = new ArrayList<>();
 
@@ -235,6 +263,8 @@ public class MenuParser {
      * Method to calculate the menu bounding boxes using the intersection points of the table lines
      */
     private void calculateMenuBounds() {
+        this.menuBounds = new ArrayList<>();
+
         int[][] xPoints = new int[this.horizontalLines.size() - 1][2]; //points lying on the x-axis
         int[][] yPoints = new int[this.verticalLines.size() - 1][2]; //points lying on the y-axis
 
@@ -257,222 +287,20 @@ public class MenuParser {
             for (int[] y : yPoints) {
                 Rectangle menu = new Rectangle();
                 menu.setBounds(y[0], x[0], y[1] - y[0], x[1] - x[0]);
-                this.menuBounds.add(this.upscaleRectangle(menu));
+                this.menuBounds.add(menu);
             }
         }
     }
 
+    /**
+     * Return the header text of the pdf
+     *
+     * @param pdf pdf to get text from
+     * @return pdf text
+     * @throws IOException text reading failed
+     */
     private String getHeaderText(PDDocument pdf) throws IOException {
         return unicodeMapper.process(textStripper.getText(pdf).split("\n")[0]); // Get first line
-    }
-
-    /**
-     * Method to ocr the menus of a week multithreaded
-     *
-     * @throws ExecutionException   exception thrown when the result of a thread resulted in an exception
-     * @throws InterruptedException exception thrown if a running thread gets interrupted
-     * @throws IOException
-     * @throws URISyntaxException
-     * @throws ParseException
-     * @throws RuntimeException
-     */
-
-    private void ocrMenus() throws ExecutionException, InterruptedException, IOException, URISyntaxException, ParseException, RuntimeException {
-        float downscaleFactor = 0.25f;
-
-        //extract menu week date
-        int scaledImageWidth = (int) (this.image.getWidth() * downscaleFactor);
-        int scaledImageHeight = (int) (this.image.getHeight() * downscaleFactor);
-        BufferedImage scaledImage = ImageHelper.getScaledInstance(this.image, scaledImageWidth, scaledImageHeight);
-        List<Word> textlines = this.createTesseractInstance().getWords(scaledImage, ITessAPI.TessPageIteratorLevel.RIL_TEXTLINE);
-        Word headerWord = null;
-
-        List<Word> headerWords = new ArrayList<>();
-
-        for (Word textline : textlines) {
-            Rectangle boundingBox = textline.getBoundingBox();
-            if (headerWord == null && boundingBox.width > boundingBox.height * 3) headerWord = textline;
-            else if (headerWord != null && boundingBox.y < headerWord.getBoundingBox().y && boundingBox.width > boundingBox.height * 3)
-                headerWord = textline;
-        }
-
-        assert headerWord != null;
-
-        for (Word textline : textlines) {
-            Rectangle highestBounds = headerWord.getBoundingBox();
-            Rectangle textlineBounds = textline.getBoundingBox();
-            if (textlineBounds.y < highestBounds.y + highestBounds.height && !headerWord.getText().replace("\n", "").equals(""))
-                headerWords.add(textline);
-        }
-
-        Pattern headerDatePattern = Pattern.compile("\\d{1,2}.\\d{1,2}.\\d{4}");
-        String dateText = null;
-        long highestCount = 0;
-
-        StringBuilder headerText = new StringBuilder();
-
-        for (Word word : headerWords) {
-            String transformedText = word.getText().replace("\n", "").replace(" ", "").replace(",", ".");
-            headerText.append(transformedText);
-            Matcher matcher = headerDatePattern.matcher(transformedText);
-            long count = matcher.results().count();
-            if (count > highestCount) highestCount = count;
-            if (count == 1) {
-                String[] split = transformedText.split(String.valueOf(headerDatePattern));
-                for (String part : split) transformedText = transformedText.replace(part, "");
-                dateText = transformedText;
-            }
-        }
-
-        if(highestCount == 0) {
-            String transformedHeaderText = headerText.toString();
-            Matcher matcher = headerDatePattern.matcher(transformedHeaderText);
-            if (matcher.results().count() == 1) {
-                String[] split = headerText.toString().split(String.valueOf(headerDatePattern));
-                for (String part : split) transformedHeaderText = transformedHeaderText.replace(part, "");
-                dateText = transformedHeaderText;
-            }
-        }
-
-        if (highestCount == 0 && dateText == null) {
-            BufferedImage copy = this.getImageCopy();
-            Graphics2D graphics = (Graphics2D) copy.getGraphics();
-            graphics.setStroke(new BasicStroke(MenuParser.BORDER_WIDTH));
-            graphics.setColor(MenuParser.BOUNDS_COLOR);
-            for (Word word : headerWords) {
-                int scaledWidth = (int) (word.getBoundingBox().width * (1 / downscaleFactor));
-                int scaledHeight = (int) (word.getBoundingBox().height * (1 / downscaleFactor));
-                int scaledX = (int) (word.getBoundingBox().x * (1 / downscaleFactor));
-                int scaledY = (int) (word.getBoundingBox().y * (1 / downscaleFactor));
-                graphics.draw(new Rectangle(scaledX, scaledY, scaledWidth, scaledHeight));
-            }
-            File file = new File("errors/nodate-" + new Date().getTime() + ".png");
-            if (!file.exists()) {
-                if (file.mkdirs()) ImageIO.write(copy, "png", file);
-            }
-        }
-
-        if (dateText == null) throw new RuntimeException("No week date text detected in provided pdf document");
-        this.weekDate = new SimpleDateFormat("dd.MM.yyyy").parse(dateText);
-        log.debug("Successfully extracted menu week date from pdf text gained through ocr");
-
-        log.info("Started parsing menus using ocr");
-        List<Map.Entry<Rectangle, String[]>> menus = new ArrayList<>();
-        List<CompletableFuture<Map.Entry<Rectangle, String[]>>> futures = new ArrayList<>();
-
-        for (Rectangle boundingBox : this.menus) {
-            CompletableFuture<Map.Entry<Rectangle, String[]>> future = new CompletableFuture();
-            futures.add(future);
-            Thread thread = new Thread(() -> {
-                try {
-                    future.complete(Map.entry(boundingBox, ocrMenu(boundingBox)));
-                } catch (IOException | URISyntaxException e) {
-                    System.err.println("Failed to ocr menu!");
-                    e.printStackTrace();
-                }
-            }, "MenuOCR-" + this.menus.indexOf(boundingBox));
-            thread.start();
-        }
-
-        for (CompletableFuture<Map.Entry<Rectangle, String[]>> future : futures) {
-            menus.add(future.get());
-        }
-
-        for (Map.Entry<Rectangle, String[]> menu : menus) {
-            this.parseMenu(menu.getValue()[0], menu.getValue()[1], menu.getKey());
-        }
-    }
-
-    /**
-     * Method to ocr a menu to get its content
-     *
-     * @param boundingBox bounding box of the menu
-     * @return content of the menu
-     * @throws IOException        exception thrown if the pdf page to extract text is not found
-     * @throws URISyntaxException exception thrown if no tessdata was found
-     */
-
-    private String[] ocrMenu(Rectangle boundingBox) throws IOException, URISyntaxException {
-        Rectangle titleBounds = null;
-
-        PDFCoordinateExtractor coordinateExtractor = new PDFCoordinateExtractor(this.downscaleRectangle(boundingBox), this.PDF.getPage(0));
-        for (Map.Entry<String, Rectangle> entry : coordinateExtractor.getUnparsableWords()) {
-            int entryX = entry.getValue().x * MenuFetcher.IMAGE_SCALE_FACTOR;
-            int entryY = (entry.getValue().y - entry.getValue().height) * MenuFetcher.IMAGE_SCALE_FACTOR;
-            int entryWidth = entry.getValue().width * MenuFetcher.IMAGE_SCALE_FACTOR;
-            int entryHeight = entry.getValue().height * MenuFetcher.IMAGE_SCALE_FACTOR;
-            Rectangle entryBounds = new Rectangle(entryX, entryY, entryWidth, entryHeight);
-            if (titleBounds == null) titleBounds = entryBounds;
-            else titleBounds.add(entryBounds);
-        }
-        assert titleBounds != null;
-
-        if (titleBounds == null) {
-            log.info(String.valueOf(coordinateExtractor.getUnparsableWords().size()));
-            BufferedImage copy = this.getImageCopy();
-            Graphics2D graphics = (Graphics2D) copy.getGraphics();
-            graphics.setStroke(new BasicStroke(MenuParser.BORDER_WIDTH));
-            graphics.setColor(MenuParser.BOUNDS_COLOR);
-            graphics.draw(boundingBox);
-            File file = new File("errors/notitle-" + new Date().getTime() + ".png");
-            if(!file.exists()) {
-                if(file.mkdirs())ImageIO.write(copy, "png", file);
-            }
-        }
-
-        BufferedImage menuImage = this.image.getSubimage(titleBounds.x - 10, titleBounds.y - 10, titleBounds.width + 20, titleBounds.height + 20);
-        int scaledWidth = menuImage.getWidth() * MenuParser.MENU_SCALE_FACTOR;
-        int scaledHeight = menuImage.getHeight() * MenuParser.MENU_SCALE_FACTOR;
-
-        List<Word> textlines = this.createTesseractInstance().getWords(ImageHelper.getScaledInstance(menuImage, scaledWidth, scaledHeight), ITessAPI.TessPageIteratorLevel.RIL_TEXTLINE);
-        StringBuilder titleText = new StringBuilder();
-        for (Word textline : textlines) {
-            String replacedText = textline.getText().replace("\u2014", "").replace("-\n", "").replace("\n", " ").replace("\r", "\n");
-            titleText.append(replacedText);
-        }
-
-        //calculate content bounding box
-        int contentY = boundingBox.y + (titleBounds.height + titleBounds.y - boundingBox.y) + 5;
-        int contentHeight = boundingBox.height - (titleBounds.height + titleBounds.y - boundingBox.y) + 5;
-
-        Rectangle contentBounds = new Rectangle(boundingBox.x, contentY, boundingBox.width, contentHeight);
-        Rectangle scaled = this.downscaleRectangle(contentBounds);
-
-        PDFTextStripperByArea areaStripper = new PDFTextStripperByArea();
-        areaStripper.addRegion("menu", scaled);
-        areaStripper.extractRegions(this.PDF.getPage(0));
-
-        String menuTitle = titleText.toString();
-        String menuContent = areaStripper.getTextForRegion("menu").replace("\u2014", "").replace("-\n", " ").replace("\n", " ").replace("\r", "");
-
-        //return string array with menu title and menu content
-        return new String[]{menuTitle, menuContent};
-    }
-
-    /**
-     * Method to read the menus exclusively with the pdf file and without ocr
-     *
-     * @throws IOException      exception thrown if the pdf page to extract text is not found
-     * @throws RuntimeException exception thrown if an invalid text was given as input
-     */
-
-    /**
-     * Method to extract the menu data from the text
-     *
-     * @param title       title text
-     * @param content     content text
-     * @param boundingBox bounding box of the menu
-     * @throws IOException exception thrown if an error occurs while extracting the label
-     */
-
-    private void parseMenu(String title, String content, Rectangle boundingBox) throws IOException {
-        String description = this.getMenuDescription(content);
-        MenuLabel label = this.getMenuLabel(boundingBox);
-        List<MenuPrice> prices = this.getMenuPrices(content);
-        int menuGroup = this.getMenuGroup(boundingBox);
-        Date date = this.getMenuDate(boundingBox);
-        Menu menu = new Menu(title, prices, description, date, menuGroup, label);
-        this.parsedMenus.add(menu);
     }
 
     /**
@@ -481,7 +309,6 @@ public class MenuParser {
      * @param content content of the menu
      * @return description of the menu
      */
-
     private String getMenuDescription(String content) {
         return content.split(String.valueOf(MenuPrice.PRICE_PATTERN))[0];
     }
@@ -596,13 +423,17 @@ public class MenuParser {
      *
      * @param image1 first image to be compared
      * @param image2 second image to be compared
-     * @return similarity between the two images (1 == they're the same picture)
+     * @return similarity between the two images (1 = they're the same picture)
      */
     private float getSimilarity(BufferedImage image1, BufferedImage image2) {
         int width = image1.getWidth();
         int height = image1.getHeight();
 
-        if(image1.getWidth() != image2.getWidth() || image1.getHeight() != image2.getHeight()) image2 = ImageHelper.getScaledInstance(image2, image1.getWidth(), image2.getHeight());
+        if (image1.getWidth() != image2.getWidth() || image1.getHeight() != image2.getHeight()) {
+            BufferedImage scaled = new BufferedImage(image1.getWidth(), image1.getHeight(), image1.getType());
+            scaled.getGraphics().drawImage(image2, 0, 0, image1.getWidth(), image1.getHeight(), null);
+            image2 = scaled;
+        }
 
         long difference = 0;
         //compare every pixel in the two images
@@ -627,108 +458,4 @@ public class MenuParser {
 
         return 1 - (((float) difference) / maxDifference);
     }
-
-    /**
-     * Get all parsed menus
-     *
-     * @return List with Menu instances
-     */
-
-    public List<Menu> getMenus() {
-        return this.parsedMenus;
-    }
-
-    /**
-     * Get all bounding boxes of the parsed menus
-     *
-     * @return List with bounding boxes
-     */
-
-    public List<Rectangle> getMenuBounds() {
-        return this.menus;
-    }
-
-    /**
-     * Get a BufferedImage with the drawn bounding boxes of the recognized menus
-     *
-     * @return BufferedImage with drawn bounding boxes
-     */
-
-    public BufferedImage getDrawnMenuBounds() {
-        BufferedImage copy = this.getImageCopy();
-        Graphics2D graphics = (Graphics2D) copy.getGraphics();
-        graphics.setStroke(new BasicStroke(BORDER_WIDTH));
-        graphics.setColor(BOUNDS_COLOR);
-        graphics.setFont(new Font(graphics.getFont().getFontName(), Font.PLAIN, 25));
-
-        for (Rectangle menu : this.menus) {
-            graphics.drawRect(menu.x, menu.y, menu.width, menu.height);
-            graphics.drawString("Menu " + this.menus.indexOf(menu), menu.x + BORDER_WIDTH / 2f, menu.y + menu.height - 2);
-        }
-
-        return copy;
-    }
-
-    /**
-     * Internal method to create a copy of the initial image
-     *
-     * @return copy of the initial BufferedImage
-     */
-
-    private BufferedImage getImageCopy() {
-        BufferedImage copy = new BufferedImage(this.image.getWidth(), this.image.getHeight(), this.image.getType());
-        Graphics2D graphics = (Graphics2D) copy.getGraphics();
-        graphics.drawImage(this.image, 0, 0, null);
-        return copy;
-    }
-
-    /**
-     * Internal method to create a new tesseract instance
-     *
-     * @return new tesseract instance
-     * @throws URISyntaxException exception thrown if no tessdata was found
-     */
-
-    private Tesseract createTesseractInstance() throws URISyntaxException {
-        Tesseract tesseract = new Tesseract();
-        tesseract.setLanguage("Latin");
-        tesseract.setOcrEngineMode(ITessAPI.TessOcrEngineMode.OEM_LSTM_ONLY);
-        tesseract.setDatapath(Paths.get(ClassLoader.getSystemResource("tessdata").toURI()).toString());
-        tesseract.setTessVariable("user_defined_dpi", "300");
-        tesseract.setTessVariable("preserve_interword_spaces", "1");
-        tesseract.setPageSegMode(ITessAPI.TessPageSegMode.PSM_AUTO_OSD);
-        tesseract.setTessVariable("debug_file", "/dev/null"); //disable tesseract warnings
-        return tesseract;
-    }
-
-    /**
-     * Internal method to upscale a rectangle by the image scale factor
-     *
-     * @param rectangle rectangle to be upscaled
-     * @return upscaled rectangle
-     */
-
-    private Rectangle upscaleRectangle(Rectangle rectangle) {
-        int rectX = rectangle.x * MenuFetcher.IMAGE_SCALE_FACTOR;
-        int rectY = rectangle.y * MenuFetcher.IMAGE_SCALE_FACTOR;
-        int rectWidth = rectangle.width * MenuFetcher.IMAGE_SCALE_FACTOR;
-        int rectHeight = rectangle.height * MenuFetcher.IMAGE_SCALE_FACTOR;
-        return new Rectangle(rectX, rectY, rectWidth, rectHeight);
-    }
-
-    /**
-     * Internal method to downscale a rectangle by the image scale factor
-     *
-     * @param rectangle rectangle to be downscaled
-     * @return downscaled rectangle
-     */
-
-    private Rectangle downscaleRectangle(Rectangle rectangle) {
-        int rectX = rectangle.x / MenuFetcher.IMAGE_SCALE_FACTOR;
-        int rectY = rectangle.y / MenuFetcher.IMAGE_SCALE_FACTOR;
-        int rectWidth = rectangle.width / MenuFetcher.IMAGE_SCALE_FACTOR;
-        int rectHeight = rectangle.height / MenuFetcher.IMAGE_SCALE_FACTOR;
-        return new Rectangle(rectX, rectY, rectWidth, rectHeight);
-    }
-
 }
