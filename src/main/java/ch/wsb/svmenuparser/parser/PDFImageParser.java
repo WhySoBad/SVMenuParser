@@ -1,4 +1,4 @@
-package ch.wsb.SVMenuParser.parser;
+package ch.wsb.svmenuparser.parser;
 
 import lombok.Getter;
 import org.apache.pdfbox.contentstream.PDFStreamEngine;
@@ -38,6 +38,7 @@ public class PDFImageParser extends PDFStreamEngine {
         if ("Do".equals(operation)) {
             COSName objectName = (COSName) operands.get(0);
             PDXObject object = getResources().getXObject(objectName);
+
             if (object instanceof PDImageXObject image) {
                 Matrix matrix = getGraphicsState().getCurrentTransformationMatrix();
                 Rectangle position = new Rectangle();
@@ -45,12 +46,14 @@ public class PDFImageParser extends PDFStreamEngine {
                 BufferedImage bufferedImage = image.getImage();
                 BufferedImage copyImage = new BufferedImage(bufferedImage.getWidth(), bufferedImage.getHeight(), BufferedImage.TYPE_INT_RGB);
                 Graphics2D graphics = (Graphics2D) copyImage.getGraphics();
+
                 //remove png transparency of found icons (if they are transparent)
                 graphics.setColor(Color.BLACK);
                 graphics.drawRect(0, 0, copyImage.getWidth(), copyImage.getHeight());
                 graphics.drawImage(bufferedImage, 0, 0, copyImage.getWidth(), copyImage.getHeight(), null);
                 graphics.dispose();
                 this.images.put(position, copyImage);
+
             } else if (object instanceof PDFormXObject form) showForm(form);
         } else super.processOperator(operator, operands);
     }

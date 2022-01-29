@@ -1,4 +1,4 @@
-package ch.wsb.SVMenuParser.fetcher;
+package ch.wsb.svmenuparser.fetcher;
 
 import lombok.Getter;
 import lombok.extern.slf4j.Slf4j;
@@ -30,9 +30,12 @@ public class MenuFetcher {
         long start = new Date().getTime();
         if (!url.toString().contains("sv-restaurant")) throw new Error("URL has to contain 'sv-restaurant'");
         if (!url.toString().endsWith(".pdf")) throw new Error("URL has to link to a PDF document");
+
         InputStream stream = url.openStream();
+
         long end = new Date().getTime();
         log.info("Successfully downloaded menu week in {}ms", end - start);
+
         this.PDF = PDDocument.load(stream);
         log.debug("Successfully loaded pdf document");
     }

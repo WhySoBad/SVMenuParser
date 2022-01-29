@@ -1,4 +1,4 @@
-package ch.wsb.SVMenuParser.menu;
+package ch.wsb.svmenuparser.menu;
 
 public enum MenuLabel {
     VEGETARIAN("vegetarian"),

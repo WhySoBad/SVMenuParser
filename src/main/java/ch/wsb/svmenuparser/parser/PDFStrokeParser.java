@@ -1,4 +1,4 @@
-package ch.wsb.SVMenuParser.parser;
+package ch.wsb.svmenuparser.parser;
 
 import lombok.Getter;
 import org.apache.pdfbox.contentstream.PDFGraphicsStreamEngine;
