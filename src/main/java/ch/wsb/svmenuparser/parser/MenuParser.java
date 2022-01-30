@@ -164,8 +164,8 @@ public class MenuParser {
         if (text.contains("—")) { // If em dash present, split title from it by it
             String[] split = text.split("—");
 
-            title = split[0].replace("-\n", " ").replace("\n", " ").replace("\r", "").trim();
-            body = split[1].replace("-\n", " ").replace("\n", " ").replace("\r", "").trim();
+            title = split[0].trim();
+            body = split[1].trim();
 
         } else { // else, use the last unicode as a reference
             int last = unicodeMapper.getLastUnicodeOccasion(text);
@@ -180,8 +180,8 @@ public class MenuParser {
             }
         }
 
-        title = unicodeMapper.process(title);
-        body = unicodeMapper.process(body);
+        title = unicodeMapper.process(title.replace("-\n", "").replace("\n", " ").replace("\r", ""));
+        body = unicodeMapper.process(body.replace("-\n", "").replace("\n", " ").replace("\r", ""));
 
         return new Menu(title, getMenuPrices(body), getMenuDescription(body), getMenuDate(bounds, weekDate), getMenuGroup(bounds), getMenuLabel(bounds));
     }
