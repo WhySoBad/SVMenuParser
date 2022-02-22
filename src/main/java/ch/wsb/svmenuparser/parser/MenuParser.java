@@ -21,6 +21,7 @@ import java.util.List;
 import java.util.regex.MatchResult;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
+import java.util.stream.Collectors;
 
 /**
  * This class is used to read menu pdfs so that they can be processed
@@ -119,8 +120,8 @@ public class MenuParser {
 
         // Get the menus
         List<String> menus = extractMenuTextsRaw();
-        for (String menu : menus) {
-            this.menus.add(parseMenu(menu, menuBounds.get(menus.indexOf(menu)), weekDate));
+        for (int i = 0; i < menus.size(); i++) {
+            this.menus.add(parseMenu(menus.get(i), menuBounds.get(i), weekDate));
         }
 
         log.info("Read menu PDF in {}ms", System.currentTimeMillis() - start);
@@ -167,21 +168,30 @@ public class MenuParser {
             title = split[0].trim();
             body = split[1].trim();
 
+            title = title.replace("\n", " ");
+            title = Arrays.stream(title.split(" ")).map(word -> word.length() > 0 ? word.charAt(0) + word.toLowerCase().substring(1) : "").collect(Collectors.joining(" "));
+
         } else { // else, use the last unicode as a reference
             int last = unicodeMapper.getLastUnicodeOccasion(text);
 
-            title = text.substring(0, last + 1).trim();
-            body = text.substring(last + 1).trim();
+            title = unicodeMapper.process(text.substring(0, last + 1).trim());
+            body = unicodeMapper.process(text.substring(last + 1).trim());
 
             // Fill last quote if not done
-            if (body.startsWith("\"") && title.chars().filter(ch -> ch == '\"').count() % 2 != 0) {
+            if (title.chars().filter(ch -> ch == '\"').count() % 2 != 0) {
                 title += "\"";
+                body = body.substring(1);
+            }
+
+            // Fill last weirdo quote if not done
+            if (title.chars().filter(ch -> ch == '«' || ch == '»').count() % 2 != 0) {
+                title += "»";
                 body = body.substring(1);
             }
         }
 
-        title = unicodeMapper.process(title.replace("-\n", "").replace("\n", " ").replace("\r", ""));
-        body = unicodeMapper.process(body.replace("-\n", "").replace("\n", " ").replace("\r", ""));
+        title = title.replace("-\n", "").replace("\n", " ").replace("\r", "");
+        body = body.replace("-\n", "").replace("\n", " ").replace("\r", "");
 
         return new Menu(title, getMenuPrices(body), getMenuDescription(body), getMenuDate(bounds, weekDate), getMenuGroup(bounds), getMenuLabel(bounds));
     }
@@ -397,13 +407,12 @@ public class MenuParser {
         int index = this.menuBounds.indexOf(boundingBox);
         Calendar calendar = Calendar.getInstance();
         calendar.setTime(weekDate);
-        calendar.add(Calendar.DAY_OF_WEEK, -calendar.get(Calendar.DAY_OF_WEEK));
+        calendar.set(Calendar.DAY_OF_WEEK, Calendar.MONDAY); // Our week begins at monday
 
-        int row = this.getMenuGroup(boundingBox) + 1;
-        if ((index + 1) % (this.verticalLines.size() - 1) == 0) row--;
-        int weekDay = index - (row - 1) * (this.verticalLines.size() - 1);
+        int row = this.getMenuGroup(boundingBox);
+        int offset = index - ((this.verticalLines.size() - 1) * row);
 
-        calendar.add(Calendar.DAY_OF_WEEK, weekDay + 2); //+2 because calendar week starts at sunday with index 1
+        calendar.add(Calendar.DAY_OF_WEEK, offset);
         return calendar.getTime();
     }
 
@@ -415,7 +424,7 @@ public class MenuParser {
      */
     private int getMenuGroup(Rectangle boundingBox) {
         int index = this.menuBounds.indexOf(boundingBox);
-        return (index + 1) / (this.verticalLines.size() - 1);
+        return (index) / (this.verticalLines.size() - 1); // Because one additional line at end
     }
 
     /**
