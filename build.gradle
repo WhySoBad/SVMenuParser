@@ -2,6 +2,9 @@ plugins {
     id 'java'
 }
 
+sourceCompatibility = 17
+targetCompatibility = 11
+
 group 'ch.wsb'
 version '1.3'
 

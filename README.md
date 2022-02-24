@@ -1,6 +1,7 @@
 # SV Menu Parser
 
 [![](https://jitpack.io/v/WhySoBad/SVMenuParser.svg)](https://jitpack.io/#WhySoBad/SVMenuParser/)
+
 A java library to parse menu data from pdfs that are provided by the SV Group. A pdf document, containing the week
 overview of menus, is read and serialized for future use by machines.
 
