@@ -3,7 +3,7 @@ plugins {
 }
 
 sourceCompatibility = 17
-targetCompatibility = 11
+targetCompatibility = 17
 
 group 'ch.wsb'
 version '1.3'
